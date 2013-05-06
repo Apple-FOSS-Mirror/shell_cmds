@@ -1,5 +1,6 @@
+/*	$NetBSD: locate.code.c,v 1.6 1997/10/19 04:11:54 lukem Exp $	*/
+
 /*
- * Copyright (c) 1995 Wolfram Schneider <wosch@FreeBSD.org>. Berlin.
  * Copyright (c) 1989, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -33,18 +34,19 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD: src/usr.bin/locate/code/locate.code.c,v 1.13 2002/03/22 01:22:47 imp Exp $
  */
 
+#include <sys/cdefs.h>
 #ifndef lint
-static char copyright[] =
-"@(#) Copyright (c) 1989, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
+__COPYRIGHT("@(#) Copyright (c) 1989, 1993\n\
+	The Regents of the University of California.  All rights reserved.\n");
 #endif /* not lint */
 
 #ifndef lint
-static char sccsid[] = "@(#)locate.code.c	8.1 (Berkeley) 6/6/93";
+#if 0
+static char sccsid[] = "@(#)locate.code.c	8.4 (Berkeley) 5/4/95";
+#endif
+__RCSID("$NetBSD: locate.code.c,v 1.6 1997/10/19 04:11:54 lukem Exp $");
 #endif /* not lint */
 
 /*
@@ -73,66 +75,48 @@ static char sccsid[] = "@(#)locate.code.c	8.1 (Berkeley) 6/6/93";
  *
  *	0-28	likeliest differential counts + offset to make nonnegative
  *	30	switch code for out-of-range count to follow in next word
- *      31      an 8 bit char followed
  *	128-255 bigram codes (128 most common, as determined by 'updatedb')
  *	32-127  single character (printable) ascii residue (ie, literal)
  *
- * The locate database store any character except newline ('\n') 
- * and NUL ('\0'). The 8-bit character support don't wast extra
- * space until you have characters in file names less than 32
- * or greather than 127.
- * 
- *
- * SEE ALSO:	updatedb.sh, ../bigram/locate.bigram.c
+ * SEE ALSO:	updatedb.csh, bigram.c
  *
  * AUTHOR:	James A. Woods, Informatics General Corp.,
  *		NASA Ames Research Center, 10/82
- *              8-bit file names characters: 
- *              	Wolfram Schneider, Berlin September 1996
  */
 
 #include <sys/param.h>
+
 #include <err.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <unistd.h>
+
 #include "locate.h"
 
 #define	BGBUFSIZE	(NBG * 2)	/* size of bigram buffer */
 
-u_char buf1[MAXPATHLEN] = " ";	
-u_char buf2[MAXPATHLEN];
-u_char bigrams[BGBUFSIZE + 1] = { 0 };
+char buf1[MAXPATHLEN] = " ";	
+char buf2[MAXPATHLEN];
+char bigrams[BGBUFSIZE + 1] = { 0 };
 
-#define LOOKUP 1 /* use a lookup array instead a function, 3x faster */
-
-#ifdef LOOKUP
-#define BGINDEX(x) (big[(u_char)*x][(u_char)*(x + 1)])
-typedef short bg_t;
-bg_t big[UCHAR_MAX + 1][UCHAR_MAX + 1];
-#else
-#define BGINDEX(x) bgindex(x)
-typedef int bg_t;
-int	bgindex(char *);
-#endif /* LOOKUP */
-
-
-void	usage(void);
+int	bgindex __P((char *));
+int	main __P((int, char **));
+void	usage __P((void));
 
 int
 main(argc, argv)
 	int argc;
 	char *argv[];
 {
-	register u_char *cp, *oldpath, *path;
+	char *cp, *oldpath, *path;
 	int ch, code, count, diffcount, oldcount;
 	FILE *fp;
-	register int i, j;
 
 	while ((ch = getopt(argc, argv, "")) != -1)
 		switch(ch) {
+		case '?':
 		default:
 			usage();
 		}
@@ -147,51 +131,30 @@ main(argc, argv)
 
 	/* First copy bigram array to stdout. */
 	(void)fgets(bigrams, BGBUFSIZE + 1, fp);
-
 	if (fwrite(bigrams, 1, BGBUFSIZE, stdout) != BGBUFSIZE)
 		err(1, "stdout");
 	(void)fclose(fp);
 
-#ifdef LOOKUP
-	/* init lookup table */
-	for (i = 0; i < UCHAR_MAX + 1; i++)
-	    	for (j = 0; j < UCHAR_MAX + 1; j++) 
-			big[i][j] = (bg_t)-1;
-
-	for (cp = bigrams, i = 0; *cp != '\0'; i += 2, cp += 2)
-	        big[(u_char)*cp][(u_char)*(cp + 1)] = (bg_t)i;
-
-#endif /* LOOKUP */
-
 	oldpath = buf1;
 	path = buf2;
 	oldcount = 0;
-
 	while (fgets(path, sizeof(buf2), stdin) != NULL) {
+		/* Truncate newline. */
+		cp = path + strlen(path) - 1;
+		if (cp > path && *cp == '\n')
+			*cp = '\0';
 
-		/* skip empty lines */
-		if (*path == '\n')
-			continue;
-
-		/* remove newline */
+		/* Squelch characters that would botch the decoding. */
 		for (cp = path; *cp != '\0'; cp++) {
-#ifndef LOCATE_CHAR30
-			/* old locate implementations core'd for char 30 */
-			if (*cp == SWITCH)
+			*cp &= PARITY-1;
+			if (*cp <= SWITCH)
 				*cp = '?';
-			else
-#endif /* !LOCATE_CHAR30 */
-
-			/* chop newline */
-			if (*cp == '\n')
-				*cp = '\0';
 		}
 
 		/* Skip longest common prefix. */
 		for (cp = path; *cp == *oldpath; cp++, oldpath++)
-			if (*cp == '\0')
+			if (*oldpath == '\0')
 				break;
-
 		count = cp - path;
 		diffcount = count - oldcount + OFFSET;
 		oldcount = count;
@@ -204,42 +167,22 @@ main(argc, argv)
 				err(1, "stdout");
 
 		while (*cp != '\0') {
-			/* print *two* characters */
-
-			if ((code = BGINDEX(cp)) != (bg_t)-1) {
-				/*
-				 * print *one* as bigram
-				 * Found, so mark byte with 
-				 *  parity bit. 
-				 */
+			if (*(cp + 1) == '\0') {
+				if (putchar(*cp) == EOF)
+					err(1, "stdout");
+				break;
+			}
+			if ((code = bgindex(cp)) < 0) {
+				if (putchar(*cp++) == EOF ||
+				    putchar(*cp++) == EOF)
+					err(1, "stdout");
+			} else {
+				/* Found, so mark byte with parity bit. */
 				if (putchar((code / 2) | PARITY) == EOF)
 					err(1, "stdout");
 				cp += 2;
 			}
-
-			else {
-				for (i = 0; i < 2; i++) {
-					if (*cp == '\0')
-						break;
-
-					/* print umlauts in file names */
-					if (*cp < ASCII_MIN || 
-					    *cp > ASCII_MAX) {
-						if (putchar(UMLAUT) == EOF ||
-						    putchar(*cp++) == EOF)
-							err(1, "stdout");
-					} 
-
-					else {
-						/* normal character */
-						if(putchar(*cp++) == EOF)
-							err(1, "stdout");
-					}
-				}
-
-			}
 		}
-
 		if (path == buf1) {		/* swap pointers */
 			path = buf2;
 			oldpath = buf1;
@@ -254,21 +197,19 @@ main(argc, argv)
 	exit(0);
 }
 
-#ifndef LOOKUP
 int
 bgindex(bg)			/* Return location of bg in bigrams or -1. */
 	char *bg;
 {
-	register char bg0, bg1, *p;
+	char bg0, bg1, *p;
 
 	bg0 = bg[0];
 	bg1 = bg[1];
-	for (p = bigrams; *p != NULL; p++)
+	for (p = bigrams; *p != '\0'; p++)
 		if (*p++ == bg0 && *p == bg1)
 			break;
-	return (*p == NULL ? -1 : (--p - bigrams));
+	return (*p == '\0' ? -1 : --p - bigrams);
 }
-#endif /* !LOOKUP */
 
 void
 usage()
